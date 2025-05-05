@@ -1,133 +1,115 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
 import joblib
-from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
+import pickle
 
-# Set Streamlit page configuration
-st.set_page_config(page_title="Water Quality Potability Prediction", page_icon="💧")
+# Load the trained model (ensure 'model.pkl' or 'water_model.pkl' is in the same directory)
+try:
+    model = joblib.load("model.pkl")
+except FileNotFoundError:
+    with open("water_model.pkl", "rb") as f:
+        model = pickle.load(f)
 
-# Title of the app
-st.title("Water Quality Potability Prediction")
+st.title("💧 Water Quality Potability Classifier")
 
-# Load existing model if available, otherwise train a new one
-model_path = "model.pkl"
-if os.path.exists(model_path):
-    # Load the saved model
-    model = joblib.load(model_path)
-else:
-    # Train a new model
-    st.info("Model file not found. Training model...")
+# Sidebar for input mode selection
+mode = st.sidebar.selectbox("Select Prediction Mode", ["Single Sample", "Batch (CSV)"])
 
-    # Load and prepare the dataset
-    try:
-        data = pd.read_csv("water_potability.csv")
-    except FileNotFoundError:
-        st.error("Training data 'water_potability.csv' not found. Please ensure the file is available.")
-        st.stop()
-    data.fillna(data.mean(), inplace=True)  # Fill missing values with mean
+if mode == "Single Sample":
+    st.header("Single Water Sample Prediction")
+    # Input fields for each feature
+    ph = st.number_input("pH", value=7.0, step=0.1)
+    hardness = st.number_input("Hardness (mg/L)", value=100.0, step=1.0)
+    solids = st.number_input("Solids (ppm)", value=10000.0, step=100.0)
+    chloramines = st.number_input("Chloramines (ppm)", value=5.0, step=0.1)
+    sulfate = st.number_input("Sulfate (mg/L)", value=250.0, step=1.0)
+    conductivity = st.number_input("Conductivity (μS/cm)", value=400.0, step=1.0)
+    organic_carbon = st.number_input("Organic Carbon (mg/L)", value=10.0, step=0.1)
+    trihalomethanes = st.number_input("Trihalomethanes (ppb)", value=80.0, step=1.0)
+    turbidity = st.number_input("Turbidity (NTU)", value=3.0, step=0.1)
+    
+    if st.button("Predict Single Sample"):
+        # Prepare input DataFrame
+        input_dict = {
+            'ph': [ph],
+            'Hardness': [hardness],
+            'Solids': [solids],
+            'Chloramines': [chloramines],
+            'Sulfate': [sulfate],
+            'Conductivity': [conductivity],
+            'Organic_carbon': [organic_carbon],
+            'Trihalomethanes': [trihalomethanes],
+            'Turbidity': [turbidity]
+        }
+        input_df = pd.DataFrame(input_dict)
+        
+        # Perform prediction
+        pred_class = model.predict(input_df)[0]
+        pred_prob = model.predict_proba(input_df)[0]  # [prob_not_potable, prob_potable]
+        prob_not, prob_pot = pred_prob[0], pred_prob[1]
+        
+        # Display prediction result
+        if pred_class == 1:
+            st.success("✅ **Result:** The water sample is predicted **Potable**.")
+        else:
+            st.error("❌ **Result:** The water sample is predicted **Not Potable**.")
+        
+        # Display probabilities
+        st.subheader("Class Probabilities")
+        prob_col1, prob_col2 = st.columns(2)
+        prob_col1.write(f"Potable Water: **{prob_pot * 100:.2f}%**")
+        prob_col1.progress(int(prob_pot * 100))
+        prob_col2.write(f"Not Potable Water: **{prob_not * 100:.2f}%**")
+        prob_col2.progress(int(prob_not * 100))
+        
+        # (Optional) Display a small bar chart for probabilities
+        chart_data = pd.DataFrame({
+            'Probability (%)': [prob_not * 100, prob_pot * 100]
+        }, index=['Not Potable', 'Potable'])
+        st.bar_chart(chart_data, x_label="Water Type", y_label="Probability (%)")
 
-    # Define features and target
-    feature_cols = [
-        'ph', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
-        'Conductivity', 'Organic_carbon', 'Trihalomethanes', 'Turbidity'
-    ]
-    X = data[feature_cols]
-    y = data['Potability']
-
-    # Split into training and test sets (80/20)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, train_size=0.8, random_state=101
-    )
-
-    # Train XGBoost classifier
-    with st.spinner("Training XGBoost model..."):
-        model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', n_jobs=1)
-        model.fit(X_train, y_train)
-        # Save the trained model to disk
-        joblib.dump(model, model_path)
-    st.success("Model training completed and saved.")
-
-# Create tabs for batch and single prediction
-tab1, tab2 = st.tabs(["Batch Prediction", "Single Sample Prediction"])
-
-with tab1:
-    st.header("Batch Prediction (CSV Upload)")
-    uploaded_file = st.file_uploader(
-        "Upload a CSV file with water samples for prediction",
-        type=["csv"]
-    )
+elif mode == "Batch (CSV)":
+    st.header("Batch Prediction from CSV")
+    uploaded_file = st.file_uploader("Upload a CSV file with water samples", type=["csv"])
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file)
+            data = pd.read_csv(uploaded_file)
         except Exception as e:
-            st.error(f"Error reading CSV file: {e}")
+            st.error(f"Error reading CSV: {e}")
+            st.stop()
+        
+        # Ensure required feature columns exist
+        required_cols = ['ph','Hardness','Solids','Chloramines','Sulfate',
+                         'Conductivity','Organic_carbon','Trihalomethanes','Turbidity']
+        if not all(col in data.columns for col in required_cols):
+            st.error(f"Uploaded CSV must contain columns: {required_cols}")
         else:
-            # Required feature columns
-            feature_cols = [
-                'ph', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
-                'Conductivity', 'Organic_carbon', 'Trihalomethanes', 'Turbidity'
-            ]
-            # Check for missing columns
-            missing_cols = [col for col in feature_cols if col not in df.columns]
-            if missing_cols:
-                st.error(f"Missing required columns: {missing_cols}")
-            else:
-                # Prepare data for prediction
-                X_new = df[feature_cols].copy()
-                X_new.fillna(X_new.mean(), inplace=True)  # Fill missing values
-                # Predict classes and probabilities
-                preds = model.predict(X_new)
-                probs_1 = model.predict_proba(X_new)[:, 1]  # Probability of class 1 (Potable)
-                # Calculate probability of predicted class
-                pred_probs = []
-                for i, pred in enumerate(preds):
-                    if pred == 1:
-                        pred_probs.append(probs_1[i])
-                    else:
-                        pred_probs.append(1 - probs_1[i])
-                # Prepare results DataFrame
-                result_df = df[feature_cols].copy()
-                result_df['Predicted Potability'] = preds
-                result_df['Prediction Probability'] = pred_probs
-                st.subheader("Prediction Results")
-                st.dataframe(result_df)
-    else:
-        st.write("Awaiting CSV file upload for batch prediction.")
-
-with tab2:
-    st.header("Single Sample Prediction")
-    st.write("Enter feature values for a single water sample:")
-    # Create a form for input
-    with st.form("single_sample_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            ph = st.number_input("pH", min_value=0.0, max_value=14.0, value=7.0, step=0.1)
-            hardness = st.number_input("Hardness", min_value=0.0, max_value=500.0, value=100.0, step=1.0)
-            solids = st.number_input("Solids", min_value=0.0, max_value=50000.0, value=20000.0, step=100.0)
-            chloramines = st.number_input("Chloramines", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
-            sulfate = st.number_input("Sulfate", min_value=0.0, max_value=500.0, value=250.0, step=1.0)
-        with col2:
-            conductivity = st.number_input("Conductivity", min_value=0.0, max_value=1000.0, value=400.0, step=1.0)
-            organic_carbon = st.number_input("Organic_carbon", min_value=0.0, max_value=50.0, value=10.0, step=0.1)
-            trihalomethanes = st.number_input("Trihalomethanes", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
-            turbidity = st.number_input("Turbidity", min_value=0.0, max_value=10.0, value=2.0, step=0.1)
-        submitted = st.form_submit_button("Predict")
-    if submitted:
-        # Prepare input array for prediction
-        input_features = np.array([[
-            ph, hardness, solids, chloramines, sulfate,
-            conductivity, organic_carbon, trihalomethanes, turbidity
-        ]])
-        # Make prediction
-        pred = model.predict(input_features)[0]
-        proba = model.predict_proba(input_features)[0]
-        # Determine associated probability
-        prob_val = proba[1] if pred == 1 else proba[0]
-        # Display result
-        if pred == 1:
-            st.success(f"Prediction: Potable (1) with probability {prob_val:.2f}")
-        else:
-            st.success(f"Prediction: Not Potable (0) with probability {prob_val:.2f}")
+            if st.button("Predict Batch"):
+                # Predict for each sample
+                predictions = model.predict(data[required_cols])
+                data['Predicted_Potability'] = predictions
+                
+                # Calculate counts and percentages
+                total_samples = len(data)
+                class_counts = pd.Series(predictions).value_counts().sort_index()
+                count_not = class_counts.get(0, 0)
+                count_pot = class_counts.get(1, 0)
+                perc_not = (count_not / total_samples) * 100
+                perc_pot = (count_pot / total_samples) * 100
+                
+                # Display counts and percentages
+                st.subheader("Prediction Summary")
+                col1, col2 = st.columns(2)
+                col1.metric("Potable Samples", f"{count_pot} ({perc_pot:.2f}%)")
+                col2.metric("Not Potable Samples", f"{count_not} ({perc_not:.2f}%)")
+                
+                # Bar chart of percentage distribution
+                dist_df = pd.DataFrame({
+                    'Percentage (%)': [perc_not, perc_pot]
+                }, index=['Not Potable', 'Potable'])
+                st.bar_chart(dist_df, x_label="Water Type", y_label="Percentage (%)")
+                
+                # Show data with predictions
+                st.subheader("Predicted Data")
+                st.dataframe(data)
