@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
@@ -9,119 +10,113 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from imblearn.over_sampling import RandomOverSampler
 
-# Title
-st.title("Water Potability Prediction")
+# --- Constants and Feature List ---
+FEATURES = ['ph','Hardness','Solids','Chloramines','Sulfate',
+            'Conductivity','Organic_carbon','Trihalomethanes','Turbidity']
+TARGET = 'Potability'
 
-# Load and preprocess dataset
-df_water = pd.read_csv("water_potability.csv")
-df_water_cleaned = df_water.fillna(df_water.mean())
+st.title("💧 Water Potability Prediction")
 
-# Class distribution plot
-st.subheader("Potability Class Distribution")
-fig1, ax1 = plt.subplots()
-sns.countplot(x='Potability', data=df_water_cleaned, ax=ax1)
-st.pyplot(fig1)
+# --- Load & Clean Data ---
+@st.cache_data
+def load_data(path='water_potability.csv'):
+    df = pd.read_csv(path)
+    df = df.fillna(df.mean())
+    return df
 
-# Features and Target
-x = df_water_cleaned.iloc[:, :-1]
-y = df_water_cleaned['Potability']
+df = load_data()
 
-# Train-Test Split
-x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=0.8, random_state=101)
+# Show class distribution
+st.subheader("Dataset Potability Distribution")
+fig, ax = plt.subplots()
+sns.countplot(x=TARGET, data=df, ax=ax)
+ax.set_xticklabels(['Unsafe (0)','Safe (1)'])
+st.pyplot(fig)
 
-# Models
+# --- Prepare Train/Test ---
+X = df[FEATURES]
+y = df[TARGET]
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y)
+
+# Balance training data with oversampling
+ros = RandomOverSampler(random_state=42)
+X_res, y_res = ros.fit_resample(X_train, y_train)
+
+# --- Train Models & Record Scores ---
 models = {
-    "RandomForestClassifier": RandomForestClassifier(random_state=42),
-    "LogisticRegression": LogisticRegression(max_iter=1000),
-    "KNeighborsClassifier": KNeighborsClassifier(),
-    "MLPClassifier": MLPClassifier(max_iter=500)
+    'RandomForest': RandomForestClassifier(random_state=42),
+    'LogisticRegression': LogisticRegression(max_iter=1000, random_state=42),
+    'KNN': KNeighborsClassifier(),
+    'NaiveBayes': GaussianNB(),
+    'MLP': MLPClassifier(max_iter=500, random_state=42)
 }
-
-model_scores = []
-
-# Train and evaluate models
+scores = []
 for name, model in models.items():
-    model.fit(x_train, y_train)
-    y_pred = model.predict(x_test)
-    acc = accuracy_score(y_test, y_pred)
-    model_scores.append((name, acc))
+    model.fit(X_res, y_res)
+    pred = model.predict(X_test)
+    acc = accuracy_score(y_test, pred)
+    scores.append({'Algorithm': name, 'Score': acc})
+score_df = pd.DataFrame(scores).sort_values('Score', ascending=False)
 
-# Show model scores as a graph
-st.subheader("Model Accuracy Comparison")
-score_df = pd.DataFrame(model_scores, columns=['Algorithm', 'Score'])
-fig_score, ax_score = plt.subplots()
-sns.barplot(data=score_df, x='Algorithm', y='Score', ax=ax_score)
-ax_score.set_ylim(0, 1)
-ax_score.set_title("Algorithm Accuracy on Test Set")
-st.pyplot(fig_score)
+# --- Model Comparison Graph ---
+st.subheader("Model Accuracy Comparison on Test Set")
+fig2, ax2 = plt.subplots()
+sns.barplot(data=score_df, x='Algorithm', y='Score', ax=ax2)
+ax2.set_ylim(0,1)
+st.pyplot(fig2)
 
-# Single Sample Prediction
+# Select default model (best)
+best_name = score_df.iloc[0]['Algorithm']
+best_model = models[best_name]
+
+# --- Single Sample Prediction ---
 st.subheader("🔍 Single Sample Prediction")
-st.markdown("Provide values for each feature to predict water potability.")
-def user_input_features():
-    ph = st.number_input('pH', value=7.0)
-    hardness = st.number_input('Hardness', value=200.0)
-    solids = st.number_input('Solids', value=15000.0)
-    chloramines = st.number_input('Chloramines', value=7.0)
-    sulfate = st.number_input('Sulfate', value=330.0)
-    conductivity = st.number_input('Conductivity', value=400.0)
-    organic_carbon = st.number_input('Organic Carbon', value=10.0)
-    trihalomethanes = st.number_input('Trihalomethanes', value=60.0)
-    turbidity = st.number_input('Turbidity', value=3.0)
-    data = {
-        'ph': ph,
-        'Hardness': hardness,
-        'Solids': solids,
-        'Chloramines': chloramines,
-        'Sulfate': sulfate,
-        'Conductivity': conductivity,
-        'Organic_carbon': organic_carbon,
-        'Trihalomethanes': trihalomethanes,
-        'Turbidity': turbidity
-    }
-    return pd.DataFrame(data, index=[0])
+st.info(f"Default model: {best_name}")
+input_vals = {}
+for feature in FEATURES:
+    default = float(df[feature].mean())
+    input_vals[feature] = st.number_input(feature, value=default)
+input_df = pd.DataFrame([input_vals])[FEATURES]
+if st.button("Predict Single Sample"):
+    pred = best_model.predict(input_df)[0]
+    proba = best_model.predict_proba(input_df)[0][1]
+    st.metric("Potable Probability", f"{proba*100:.2f}%")
+    if pred==1:
+        st.success("Prediction: SAFE to drink")
+    else:
+        st.error("Prediction: NOT safe to drink")
 
-input_df = user_input_features()
-st.write("Your Input:", input_df)
-
-# Default model: Random Forest
-default_model = RandomForestClassifier(random_state=42)
-default_model.fit(x_train, y_train)
-pred = default_model.predict(input_df)
-proba = default_model.predict_proba(input_df)[0][1] * 100
-
-st.success(f"Prediction: {'Safe' if pred[0] == 1 else 'Unsafe'}")
-st.info(f"Confidence: {proba:.2f}%")
-
-# Batch Prediction
-st.subheader("📤 Batch Prediction")
-uploaded_file = st.file_uploader("Upload CSV File for Batch Prediction", type=['csv'])
-if uploaded_file is not None:
-    input_batch = pd.read_csv(uploaded_file)
-    input_batch = input_batch.fillna(df_water.mean())
-    batch_pred = default_model.predict(input_batch)
-    batch_proba = default_model.predict_proba(input_batch)[:, 1] * 100
-    input_batch['Prediction'] = batch_pred
-    input_batch['Probability (%)'] = batch_proba.round(2)
-    st.write(input_batch)
-
-    # Bar chart summary
-    st.subheader("Batch Prediction Summary")
-    batch_summary = input_batch['Prediction'].value_counts(normalize=True) * 100
-    fig_batch, ax_batch = plt.subplots()
-    batch_summary.plot(kind='bar', color=['red', 'green'], ax=ax_batch)
-    ax_batch.set_ylabel("Percentage")
-    ax_batch.set_xticklabels(['Unsafe (0)', 'Safe (1)'], rotation=0)
-    ax_batch.set_title("Potability Distribution in Batch")
-    st.pyplot(fig_batch)
-
-    # Pie chart summary
-    fig_pie, ax_pie = plt.subplots()
-    input_batch['Prediction'].value_counts().plot.pie(autopct='%1.1f%%', labels=['Unsafe', 'Safe'], colors=['red', 'green'], ax=ax_pie)
-    ax_pie.set_title("Potability Percentage (Batch)")
-    st.pyplot(fig_pie)
-
-# Footer
-st.markdown("---")
-st.markdown("Model trained using RandomForestClassifier with accuracy tracking for other models.")
+# --- Batch Prediction ---
+st.subheader("📤 Batch Prediction via CSV Upload")
+batch_file = st.file_uploader("Upload CSV", type='csv')
+if batch_file:
+    batch = pd.read_csv(batch_file)
+    # Clean and validate
+    batch = batch.fillna(df.mean())
+    missing = [c for c in FEATURES if c not in batch.columns]
+    if missing:
+        st.error(f"Missing columns: {missing}")
+    else:
+        batch = batch[FEATURES]
+        preds = best_model.predict(batch)
+        probas = best_model.predict_proba(batch)[:,1]
+        batch['Prediction'] = np.where(preds==1,'Safe','Unsafe')
+        batch['Probability (%)'] = (probas*100).round(2)
+        st.write(batch)
+        # summary
+        summary = batch['Prediction'].value_counts(normalize=True)*100
+        st.subheader("Batch Potability Distribution %")
+        fig3, ax3 = plt.subplots()
+        summary.plot(kind='bar', ax=ax3)
+        ax3.set_ylabel('Percentage')
+        st.pyplot(fig3)
+        # confusion vs assumed true if provided
+        if TARGET in batch.columns:
+            cm = confusion_matrix(batch[TARGET], preds)
+            fig4, ax4 = plt.subplots()
+            sns.heatmap(cm, annot=True, fmt='d', ax=ax4)
+            ax4.set_title('Confusion Matrix on Batch')
+            st.pyplot(fig4)
