@@ -11,8 +11,6 @@ from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-from imblearn.over_sampling import RandomOverSampler
-from imblearn.under_sampling import RandomUnderSampler
 
 # Required features
 required_features = ['ph', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
@@ -34,10 +32,7 @@ def load_and_train_models():
     X = data[required_features]
     y = data['Potability']
 
-    ros = RandomOverSampler(random_state=42)
-    X_resampled, y_resampled = ros.fit_resample(X, y)
-
-    X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     models = {
         "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
@@ -150,11 +145,15 @@ elif page == "Batch Prediction":
 
         try:
             predictions = model.predict(batch_df)
+            probas = model.predict_proba(batch_df)[:,1]
             labels = ["Safe (1)" if p == 1 else "Not Safe (0)" for p in predictions]
             batch_df['Predicted_Potability'] = labels
+            batch_df['Probability (%)'] = (probas * 100).round(2)
+
             st.subheader("Results")
             st.dataframe(batch_df)
 
+            # Summary pie chart
             counts = batch_df['Predicted_Potability'].value_counts()
             fig1, ax1 = plt.subplots()
             ax1.pie(counts, labels=counts.index, autopct='%1.1f%%', startangle=90)
@@ -165,20 +164,20 @@ elif page == "Batch Prediction":
             st.success(f"✅ Safe Samples: {counts.get('Safe (1)', 0)}")
             st.warning(f"❌ Not Safe Samples: {counts.get('Not Safe (0)', 0)}")
 
-            # Confusion matrix if actual potability is available
+            # Confusion Matrix for Batch (requires true labels)
             if 'Potability' in batch_df.columns:
-                true_labels = batch_df['Potability']
-                pred_binary = [1 if label == "Safe (1)" else 0 for label in batch_df['Predicted_Potability']]
-                cm = confusion_matrix(true_labels, pred_binary)
-                st.subheader("Confusion Matrix")
+                true = batch_df['Potability']
+                pred = model.predict(batch_df[required_features])
+                cm = confusion_matrix(true, pred)
+                st.subheader("Confusion Matrix (If Ground Truth Provided)")
                 st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
 
-                fig_cm, ax_cm = plt.subplots()
-                sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", ax=ax_cm)
-                ax_cm.set_title("Batch Prediction Confusion Matrix")
-                ax_cm.set_xlabel("Predicted")
-                ax_cm.set_ylabel("Actual")
-                st.pyplot(fig_cm)
+                fig2, ax2 = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax2)
+                ax2.set_title("Confusion Matrix Heatmap")
+                ax2.set_xlabel("Predicted")
+                ax2.set_ylabel("Actual")
+                st.pyplot(fig2)
 
         except Exception as e:
             st.error(f"Prediction error: {e}")
