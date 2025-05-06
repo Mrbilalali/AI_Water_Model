@@ -1,130 +1,165 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from imblearn.over_sampling import RandomOverSampler
+from sklearn.utils import resample
 
 # Title
-st.title("Water Potability Prediction")
+st.title("Water Potability Prediction - Batch & Individual Analysis")
 
-# Load and preprocess dataset
+# Load dataset
 df_water = pd.read_csv("water_potability.csv")
+
+# Display missing values
+st.subheader("Missing Values per Column")
+st.write(df_water.isna().sum())
+
+# Fill missing with column mean
 df_water_cleaned = df_water.fillna(df_water.mean())
 
-# Class distribution plot
-st.subheader("Potability Class Distribution")
+# Confirm no missing values
+st.subheader("After Cleaning")
+st.write(df_water_cleaned.isna().sum())
+
+# Class balance chart
+st.subheader("Class Distribution (Potability)")
 fig1, ax1 = plt.subplots()
 sns.countplot(x='Potability', data=df_water_cleaned, ax=ax1)
 st.pyplot(fig1)
 
 # Features and Target
-X = df_water_cleaned.iloc[:, :-1]
+x = df_water_cleaned.iloc[:, :-1]
 y = df_water_cleaned['Potability']
 
 # Train-Test Split
-X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=0.8, random_state=101, stratify=y)
+x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=0.8, random_state=101)
 
-# Balance training data via oversampling
-ros = RandomOverSampler(random_state=42)
-X_train_bal, y_train_bal = ros.fit_resample(X_train, y_train)
+st.write("Training Features Shape:", x_train.shape)
+st.write("Training Labels Shape:", y_train.shape)
+st.write("Test Features Shape:", x_test.shape)
+st.write("Test Labels Shape:", y_test.shape)
 
-# Scale features for algorithms that need it
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train_bal)
-X_test_scaled = scaler.transform(X_test)
+# Resampling to address imbalance
+df_train = pd.concat([x_train, y_train], axis=1)
+majority = df_train[df_train.Potability == 0]
+minority = df_train[df_train.Potability == 1]
+minority_upsampled = resample(minority, replace=True, n_samples=len(majority), random_state=42)
+df_balanced = pd.concat([majority, minority_upsampled])
+
+x_train_balanced = df_balanced.iloc[:, :-1]
+y_train_balanced = df_balanced['Potability']
 
 # Models
 models = {
-    "RandomForestClassifier": (RandomForestClassifier(random_state=42), False),
-    "LogisticRegression": (LogisticRegression(max_iter=2000, solver='lbfgs'), True),
-    "KNeighborsClassifier": (KNeighborsClassifier(), True),
-    "MLPClassifier": (MLPClassifier(max_iter=1000), True),
-    "GaussianNB": (GaussianNB(), False)
+    "Random Forest": RandomForestClassifier(random_state=42),
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    "Naive Bayes": GaussianNB(),
+    "KNN": KNeighborsClassifier(),
+    "MLP Classifier": MLPClassifier(max_iter=1000, random_state=42)
 }
 
+results = {}
 model_scores = []
-# Train and evaluate models
-for name, (model, needs_scaling) in models.items():
-    if needs_scaling:
-        model.fit(X_train_scaled, y_train_bal)
-        preds = model.predict(X_test_scaled)
-    else:
-        model.fit(X_train_bal, y_train_bal)
-        preds = model.predict(X_test)
-    acc = accuracy_score(y_test, preds)
-    model_scores.append((name, acc))
 
-# Show model scores as a graph
-st.subheader("Model Accuracy Comparison")
-score_df = pd.DataFrame(model_scores, columns=['Algorithm', 'Score'])
-fig_score, ax_score = plt.subplots()
-sns.barplot(data=score_df, x='Algorithm', y='Score', ax=ax_score)
-ax_score.set_ylim(0, 1)
-ax_score.set_title("Algorithm Accuracy on Test Set")
-st.pyplot(fig_score)
+st.subheader("Model Training and Evaluation")
+for name, model in models.items():
+    model.fit(x_train_balanced, y_train_balanced)
+    y_pred = model.predict(x_test)
+    acc = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, output_dict=True)
+    cm = confusion_matrix(y_test, y_pred)
+    results[name] = {
+        "accuracy": acc,
+        "report": report,
+        "conf_matrix": cm,
+        "model": model
+    }
+    model_scores.append({"Algorithm": name, "Score": round(acc, 3)})
+    
+    st.markdown(f"### {name}")
+    st.write(f"Accuracy: {acc:.2f}")
+    st.text("Classification Report:")
+    st.text(classification_report(y_test, y_pred))
+    fig_cm, ax_cm = plt.subplots()
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax_cm)
+    ax_cm.set_title(f"{name} - Confusion Matrix")
+    ax_cm.set_xlabel("Predicted")
+    ax_cm.set_ylabel("Actual")
+    st.pyplot(fig_cm)
 
-# Single Sample Prediction
-st.subheader("🔍 Single Sample Prediction")
-st.markdown("Provide values for each feature to predict water potability.")
-def user_input_features():
-    data = {col: st.number_input(col, value=float(X_train[col].mean())) for col in X.columns}
-    return pd.DataFrame(data, index=[0])
+# Scores DataFrame and Bar Plot
+score_df = pd.DataFrame(model_scores)
+st.subheader("📊 Model Accuracy Comparison")
+fig_scores, ax_scores = plt.subplots()
+sns.barplot(data=score_df, x="Algorithm", y="Score", palette="viridis", ax=ax_scores)
+ax_scores.set_title("Algorithm Score Comparison")
+ax_scores.set_ylim(0.5, 1.0)
+ax_scores.bar_label(ax_scores.containers[0], fmt='%.3f')
+st.pyplot(fig_scores)
 
-input_df = user_input_features()
-st.write("Your Input:", input_df)
-
-# Default model: Random Forest
-default_model, default_scaled = models['RandomForestClassifier']
-default_model.fit(X_train_bal, y_train_bal)
-
-# Prepare input for prediction
-input_arr = input_df.values
-if default_scaled:
-    input_arr = scaler.transform(input_arr)
-pred = default_model.predict(input_arr)[0]
-proba = default_model.predict_proba(input_arr)[0][1] * 100
-
-st.success(f"Prediction: {'Safe' if pred == 1 else 'Unsafe'}")
-st.info(f"Confidence: {proba:.2f}%")
-
-# Batch Prediction
-st.subheader("📤 Batch Prediction")
-uploaded_file = st.file_uploader("Upload CSV File for Batch Prediction", type=['csv'])
+# Batch Upload Prediction
+st.subheader("📤 Batch Water Sample Prediction")
+uploaded_file = st.file_uploader("Upload CSV File", type=['csv'])
 if uploaded_file is not None:
-    input_batch = pd.read_csv(uploaded_file)
-    input_batch = input_batch.fillna(df_water.mean())
-    # Ensure order
-    input_batch = input_batch[X.columns]
-    batch_arr = input_batch.values
-    if default_scaled:
-        batch_arr = scaler.transform(batch_arr)
-    batch_pred = default_model.predict(batch_arr)
-    batch_proba = default_model.predict_proba(batch_arr)[:, 1] * 100
-    input_batch['Prediction'] = batch_pred
-    input_batch['Probability (%)'] = batch_proba.round(2)
-    st.write(input_batch)
+    input_df = pd.read_csv(uploaded_file)
+    input_df = input_df.fillna(df_water.mean())
 
-    # Bar chart summary
-    st.subheader("Batch Prediction Summary")
-    batch_summary = pd.Series(batch_pred).value_counts(normalize=True) * 100
-    fig_batch, ax_batch = plt.subplots()
-    batch_summary.plot(kind='bar', ax=ax_batch)
-    ax_batch.set_ylabel("Percentage")
-    ax_batch.set_xticklabels(['Unsafe (0)', 'Safe (1)'], rotation=0)
-    ax_batch.set_title("Potability Distribution in Batch")
-    st.pyplot(fig_batch)
+    selected_model_name = st.selectbox("Select Model", list(models.keys()), index=0)
+    selected_model = results[selected_model_name]['model']
+    predictions = selected_model.predict(input_df)
+    probabilities = selected_model.predict_proba(input_df)[:, 1]
 
-    # Pie chart summary
+    input_df['Potability_Prediction'] = predictions
+    input_df['Probability (%)'] = (probabilities * 100).round(2)
+    
+    st.write(input_df)
+
+    # Total Percentage Chart
+    st.subheader("🧮 Potability Distribution in Uploaded Batch")
+    summary = input_df['Potability_Prediction'].value_counts(normalize=True) * 100
+    fig_summary, ax_summary = plt.subplots()
+    summary.plot(kind='bar', color=['red', 'green'], ax=ax_summary)
+    ax_summary.set_ylabel("Percentage")
+    ax_summary.set_xticklabels(['Unsafe (0)', 'Safe (1)'], rotation=0)
+    ax_summary.set_title("Potability Distribution in Batch")
+    st.pyplot(fig_summary)
+
+    # Pie Chart
     fig_pie, ax_pie = plt.subplots()
-    pd.Series(batch_pred).map({0:'Unsafe',1:'Safe'}).value_counts().plot.pie(autopct='%1.1f%%', ax=ax_pie)
-    ax_pie.set_title("Potability Percentage (Batch)")
+    input_df['Potability_Prediction'].value_counts().plot.pie(autopct='%1.1f%%', labels=['Unsafe', 'Safe'], colors=['red', 'green'], ax=ax_pie)
+    ax_pie.set_title("Potable vs Non-Potable Distribution")
     st.pyplot(fig_pie)
+
+# Single Sample Prediction (default True)
+st.subheader("🔍 Single Water Sample Prediction")
+sample_mode = st.checkbox("Enable Single Sample Prediction", value=True)
+
+if sample_mode:
+    st.markdown("### Enter Water Quality Features")
+    sample_input = {}
+    for col in df_water.columns[:-1]:
+        sample_input[col] = st.number_input(col, min_value=0.0, value=float(df_water[col].mean()))
+
+    sample_df = pd.DataFrame([sample_input])
+
+    selected_model_name = st.selectbox("Model for Single Prediction", list(models.keys()), index=0, key='single_model')
+    selected_model = results[selected_model_name]['model']
+    prediction = selected_model.predict(sample_df)[0]
+    probability = selected_model.predict_proba(sample_df)[0][1]
+
+    result_label = "Safe to Drink" if prediction == 1 else "Not Safe to Drink"
+    result_color = "green" if prediction == 1 else "red"
+
+    st.markdown(f"### 🧪 Result: <span style='color:{result_color}'>{result_label}</span>", unsafe_allow_html=True)
+    st.markdown(f"**Probability of Potability**: `{probability * 100:.2f}%`")
+
+# Note
+st.markdown("---")
+st.markdown("*Trained using balanced dataset with RandomOverSampler (minority class).*")
