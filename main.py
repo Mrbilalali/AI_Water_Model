@@ -1,6 +1,3 @@
-# Required Libraries: 
-# pip install streamlit pandas scikit-learn imbalanced-learn xgboost seaborn altair
-
 import streamlit as st
 import pandas as pd
 import numpy as np
