@@ -7,137 +7,164 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.naive_bayes import GaussianNB
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 from sklearn.tree import DecisionTreeClassifier
-
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from imblearn.over_sampling import RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler
 
-# Required columns
-REQUIRED_FEATURES = ['ph', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
+# Required features
+required_features = ['ph', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
                      'Conductivity', 'Organic_carbon', 'Trihalomethanes', 'Turbidity']
 
-st.set_page_config(page_title="Water Potability Prediction", layout="wide")
-st.sidebar.title("🔍 Navigation")
-page = st.sidebar.radio("Go to", ["Model Training", "Single Prediction", "Batch Prediction"])
+# Sidebar
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Model Training & Comparison", "Single Sample Prediction", "Batch Prediction"])
 
 @st.cache_resource
 def load_and_train_models():
-    data = pd.read_csv("water_potability.csv")
+    try:
+        data = pd.read_csv("water_potability.csv")
+    except FileNotFoundError:
+        st.error("Data file 'water_potability.csv' not found.")
+        return None, None, None, None, None, None
+
     data.fillna(data.mean(), inplace=True)
-    X = data[REQUIRED_FEATURES]
+    X = data[required_features]
     y = data['Potability']
 
     ros = RandomOverSampler(random_state=42)
-    rus = RandomUnderSampler(random_state=42)
-    X_over, y_over = ros.fit_resample(X, y)
-    X_under, y_under = rus.fit_resample(X, y)
+    X_resampled, y_resampled = ros.fit_resample(X, y)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
 
     models = {
         "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
         "Random Forest": RandomForestClassifier(random_state=42),
-        "KNN": KNeighborsClassifier(),
-        "Naive Bayes": GaussianNB(),
+        "Support Vector Machine": SVC(probability=True, random_state=42),
+        "K-Nearest Neighbors": KNeighborsClassifier(),
         "Decision Tree": DecisionTreeClassifier(random_state=42)
     }
 
-    results = {}
+    metrics = {}
     for name, model in models.items():
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
-        results[name] = {
-            "model": model,
-            "Accuracy": accuracy_score(y_test, y_pred),
-            "Precision": precision_score(y_test, y_pred),
-            "Recall": recall_score(y_test, y_pred),
-            "F1 Score": f1_score(y_test, y_pred),
-            "Report": classification_report(y_test, y_pred, output_dict=True),
-            "Confusion Matrix": confusion_matrix(y_test, y_pred)
-        }
-    return results, X_test, y_test
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, zero_division=0)
+        rec = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        metrics[name] = {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1 Score": f1}
 
-models_data, X_test, y_test = load_and_train_models()
+    return models, metrics, X_test, y_test, X, y
 
-if page == "Model Training":
-    st.title("📊 Water Potability Model Training & Evaluation")
+models, metrics, X_test, y_test, X_data, y_data = load_and_train_models()
 
-    metric_df = pd.DataFrame({k: {m: round(v[m], 2) for m in ['Accuracy', 'Precision', 'Recall', 'F1 Score']} 
-                               for k, v in models_data.items()}).T
+if page == "Model Training & Comparison":
+    st.header("Train and Compare Models")
+    if models is None:
+        st.stop()
 
-    st.subheader("Model Metrics Comparison")
-    st.dataframe(metric_df.style.background_gradient(cmap='BuGn'))
-
-    st.subheader("📈 Metric Comparison Chart")
-    st.bar_chart(metric_df)
+    st.subheader("Model Performance")
+    metrics_df = pd.DataFrame(metrics).T
+    st.dataframe(metrics_df.style.format("{:.2f}"))
 
     st.subheader("Confusion Matrix")
-    selected_model = st.selectbox("Select model to view confusion matrix", list(models_data.keys()))
-    cm = models_data[selected_model]['Confusion Matrix']
-    fig, ax = plt.subplots()
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-    ax.set_title(f"{selected_model} Confusion Matrix")
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("Actual")
-    st.pyplot(fig)
+    model_choice = st.selectbox("Choose model", list(models.keys()))
+    if model_choice:
+        model = models[model_choice]
+        y_pred = model.predict(X_test)
+        cm = confusion_matrix(y_test, y_pred)
+        st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
 
-elif page == "Single Prediction":
-    st.title("💧 Single Water Sample Prediction")
-    st.markdown("Enter the values below to predict potability:")
+        fig, ax = plt.subplots()
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+        ax.set_title("Confusion Matrix Heatmap")
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+        st.pyplot(fig)
 
-    sample = {}
-    for col in REQUIRED_FEATURES:
-        sample[col] = st.number_input(f"{col}", value=0.0, step=0.1)
+elif page == "Single Sample Prediction":
+    st.header("🔍 Single Sample Water Potability Prediction")
+    if models is None:
+        st.stop()
 
-    selected_model = st.selectbox("Select Model", list(models_data.keys()))
+    st.info("Provide the chemical parameters of a single water sample below to predict its potability.")
 
-    if st.button("Predict Potability"):
-        model = models_data[selected_model]['model']
-        X_input = pd.DataFrame([sample])
-        pred = model.predict(X_input)[0]
-        prob = model.predict_proba(X_input)[0][1]
+    input_data = {feature: st.number_input(feature, value=0.0) for feature in required_features}
+    input_df = pd.DataFrame([input_data])[required_features].astype(float)
+    model_choice = st.selectbox("Choose a model", list(models.keys()))
 
-        st.metric("Probability Safe (%)", f"{prob * 100:.2f}%")
-        st.progress(prob)
+    if st.button("Predict"):
+        model = models[model_choice]
+        pred = model.predict(input_df)[0]
+        prob = model.predict_proba(input_df)[0]
+
+        st.metric("Safe Probability (%)", f"{prob[1]*100:.2f}%")
+        st.progress(prob[1])
 
         if pred == 1:
-            st.success("✅ Prediction: POTABLE (Safe to Drink)")
+            st.success("✅ Prediction: POTABLE (Safe to drink)")
         else:
-            st.error("❌ Prediction: NOT POTABLE")
+            st.warning("❌ Prediction: NOT POTABLE (Unsafe)")
 
 elif page == "Batch Prediction":
-    st.title("📁 Batch Water Prediction")
-    uploaded = st.file_uploader("Upload a CSV file", type=['csv'])
+    st.header("📁 Batch Water Sample Prediction")
+    if models is None:
+        st.stop()
 
-    if uploaded is not None:
-        df = pd.read_csv(uploaded)
-        missing = [col for col in REQUIRED_FEATURES if col not in df.columns]
+    st.info("Upload a CSV file containing multiple water samples with all chemical features to predict their potability.")
+
+    uploaded_file = st.file_uploader("Upload water samples CSV", type=['csv'])
+
+    if uploaded_file is not None:
+        try:
+            batch_df = pd.read_csv(uploaded_file)
+        except Exception:
+            st.error("Invalid file.")
+            st.stop()
+
+        missing = [col for col in required_features if col not in batch_df.columns]
         if missing:
             st.error(f"Missing columns: {missing}")
-        else:
-            df = df[REQUIRED_FEATURES].apply(pd.to_numeric, errors='coerce')
-            df.fillna(df.mean(), inplace=True)
+            st.stop()
 
-            selected_model = st.selectbox("Select Model", list(models_data.keys()))
-            model = models_data[selected_model]['model']
-            preds = model.predict(df)
+        batch_df = batch_df[required_features].apply(pd.to_numeric, errors='coerce')
+        batch_df = batch_df.fillna(batch_df.mean())
 
-            df['Prediction'] = preds
-            df['Label'] = df['Prediction'].map({1: 'Safe', 0: 'Not Safe'})
-            st.dataframe(df)
+        model_choice = st.selectbox("Choose a model", list(models.keys()))
+        model = models[model_choice]
 
-            # Plot distribution
-            counts = df['Label'].value_counts()
-            st.subheader("Prediction Distribution")
+        try:
+            predictions = model.predict(batch_df)
+            probs = model.predict_proba(batch_df)
+            batch_df['Predicted_Potability'] = predictions
+
+            st.subheader("Results")
+            st.dataframe(batch_df)
+
+            counts = batch_df['Predicted_Potability'].value_counts().sort_index()
             fig1, ax1 = plt.subplots()
-            ax1.pie(counts, labels=counts.index, autopct='%1.1f%%', startangle=90)
+            ax1.pie(counts, labels=['Not Safe (0)', 'Safe (1)'], autopct='%1.1f%%', startangle=90)
             ax1.axis('equal')
             st.pyplot(fig1)
-            st.bar_chart(counts)
 
-            st.success(f"Total Samples: {len(df)}")
-            st.success(f"Safe: {counts.get('Safe', 0)}")
-            st.warning(f"Not Safe: {counts.get('Not Safe', 0)}")
+            st.bar_chart(counts)
+            st.success(f"✅ Safe Samples: {counts.get(1, 0)}")
+            st.warning(f"❌ Not Safe Samples: {counts.get(0, 0)}")
+
+            st.subheader("Batch Prediction Confusion Matrix")
+            y_true_sample = st.selectbox("Choose true label source", ["Uploaded with True Labels", "Compare with Training Sample"])
+            if y_true_sample == "Uploaded with True Labels" and 'Potability' in batch_df.columns:
+                y_true = batch_df['Potability']
+                cm = confusion_matrix(y_true, predictions)
+                st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
+                fig2, ax2 = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax2)
+                ax2.set_title("Confusion Matrix for Batch Prediction")
+                ax2.set_xlabel("Predicted")
+                ax2.set_ylabel("Actual")
+                st.pyplot(fig2)
+        except Exception as e:
+            st.error(f"Prediction error: {e}")
