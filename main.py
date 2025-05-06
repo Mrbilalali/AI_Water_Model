@@ -78,6 +78,7 @@ if page == "Model Training & Comparison":
         cm = confusion_matrix(y_test, y_pred)
         st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
 
+        # Plot heatmap
         fig, ax = plt.subplots()
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
         ax.set_title("Confusion Matrix Heatmap")
@@ -92,7 +93,18 @@ elif page == "Single Sample Prediction":
 
     st.info("Provide the chemical parameters of a single water sample below to predict its potability.")
 
-    input_data = {feature: st.number_input(feature, value=0.0) for feature in required_features}
+    input_data = {
+        'ph': st.slider('pH', 0.0, 14.0, 7.0),
+        'Hardness': st.number_input('Hardness (mg/L)', 0.0, value=200.0),
+        'Solids': st.number_input('Solids (ppm)', 0.0, value=300.0),
+        'Chloramines': st.number_input('Chloramines (ppm)', 0.0, value=3.0),
+        'Sulfate': st.number_input('Sulfate (mg/L)', 0.0, value=300.0),
+        'Conductivity': st.number_input('Conductivity (μS/cm)', 0.0, value=300.0),
+        'Organic_carbon': st.number_input('Organic Carbon (ppm)', 0.0, value=15.0),
+        'Trihalomethanes': st.number_input('Trihalomethanes (μg/L)', 0.0, value=3.0),
+        'Turbidity': st.number_input('Turbidity (NTU)', 0.0, value=3.0),
+    }
+
     input_df = pd.DataFrame([input_data])[required_features].astype(float)
     model_choice = st.selectbox("Choose a model", list(models.keys()))
 
@@ -138,33 +150,35 @@ elif page == "Batch Prediction":
 
         try:
             predictions = model.predict(batch_df)
-            probs = model.predict_proba(batch_df)
-            batch_df['Predicted_Potability'] = predictions
-
+            labels = ["Safe (1)" if p == 1 else "Not Safe (0)" for p in predictions]
+            batch_df['Predicted_Potability'] = labels
             st.subheader("Results")
             st.dataframe(batch_df)
 
-            counts = batch_df['Predicted_Potability'].value_counts().sort_index()
+            counts = batch_df['Predicted_Potability'].value_counts()
             fig1, ax1 = plt.subplots()
-            ax1.pie(counts, labels=['Not Safe (0)', 'Safe (1)'], autopct='%1.1f%%', startangle=90)
+            ax1.pie(counts, labels=counts.index, autopct='%1.1f%%', startangle=90)
             ax1.axis('equal')
             st.pyplot(fig1)
 
             st.bar_chart(counts)
-            st.success(f"✅ Safe Samples: {counts.get(1, 0)}")
-            st.warning(f"❌ Not Safe Samples: {counts.get(0, 0)}")
+            st.success(f"✅ Safe Samples: {counts.get('Safe (1)', 0)}")
+            st.warning(f"❌ Not Safe Samples: {counts.get('Not Safe (0)', 0)}")
 
-            st.subheader("Batch Prediction Confusion Matrix")
-            y_true_sample = st.selectbox("Choose true label source", ["Uploaded with True Labels", "Compare with Training Sample"])
-            if y_true_sample == "Uploaded with True Labels" and 'Potability' in batch_df.columns:
-                y_true = batch_df['Potability']
-                cm = confusion_matrix(y_true, predictions)
+            # Confusion matrix if actual potability is available
+            if 'Potability' in batch_df.columns:
+                true_labels = batch_df['Potability']
+                pred_binary = [1 if label == "Safe (1)" else 0 for label in batch_df['Predicted_Potability']]
+                cm = confusion_matrix(true_labels, pred_binary)
+                st.subheader("Confusion Matrix")
                 st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
-                fig2, ax2 = plt.subplots()
-                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax2)
-                ax2.set_title("Confusion Matrix for Batch Prediction")
-                ax2.set_xlabel("Predicted")
-                ax2.set_ylabel("Actual")
-                st.pyplot(fig2)
+
+                fig_cm, ax_cm = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", ax=ax_cm)
+                ax_cm.set_title("Batch Prediction Confusion Matrix")
+                ax_cm.set_xlabel("Predicted")
+                ax_cm.set_ylabel("Actual")
+                st.pyplot(fig_cm)
+
         except Exception as e:
             st.error(f"Prediction error: {e}")
