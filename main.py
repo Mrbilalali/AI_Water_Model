@@ -23,16 +23,20 @@ page = st.sidebar.radio("Go to", ["Model Training & Comparison", "Single Sample 
 @st.cache_resource
 def load_and_train_models():
     try:
-        data = pd.read_csv("water_potability.csv")
+        df_water = pd.read_csv("water_potability.csv")
     except FileNotFoundError:
         st.error("Data file 'water_potability.csv' not found.")
         return None, None, None, None, None, None
 
-    data.fillna(data.mean(), inplace=True)
-    X = data[required_features]
-    y = data['Potability']
+    df_water.fillna(df_water.mean(), inplace=True)
+    st.subheader("Class Distribution in Dataset")
+    fig = plt.figure(figsize=(5, 3))
+    sns.countplot(x='Potability', data=df_water)
+    st.pyplot(fig)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    x = df_water[required_features]
+    y = df_water['Potability']
+    x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=0.8, random_state=101)
 
     models = {
         "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
@@ -44,84 +48,22 @@ def load_and_train_models():
 
     metrics = {}
     for name, model in models.items():
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
+        model.fit(x_train, y_train)
+        y_pred = model.predict(x_test)
         acc = accuracy_score(y_test, y_pred)
         prec = precision_score(y_test, y_pred, zero_division=0)
         rec = recall_score(y_test, y_pred, zero_division=0)
         f1 = f1_score(y_test, y_pred, zero_division=0)
         metrics[name] = {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1 Score": f1}
 
-    return models, metrics, X_test, y_test, X, y
+    return models, metrics, x_test, y_test, x, y
 
 models, metrics, X_test, y_test, X_data, y_data = load_and_train_models()
 
-if page == "Model Training & Comparison":
-    st.header("Train and Compare Models")
-    if models is None:
-        st.stop()
-
-    st.subheader("Model Performance")
-    metrics_df = pd.DataFrame(metrics).T
-    st.dataframe(metrics_df.style.format("{:.2f}"))
-
-    st.subheader("Confusion Matrix")
-    model_choice = st.selectbox("Choose model", list(models.keys()))
-    if model_choice:
-        model = models[model_choice]
-        y_pred = model.predict(X_test)
-        cm = confusion_matrix(y_test, y_pred)
-        st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
-
-        # Plot heatmap
-        fig, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-        ax.set_title("Confusion Matrix Heatmap")
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("Actual")
-        st.pyplot(fig)
-
-elif page == "Single Sample Prediction":
-    st.header("🔍 Single Sample Water Potability Prediction")
-    if models is None:
-        st.stop()
-
-    st.info("Provide the chemical parameters of a single water sample below to predict its potability.")
-
-    input_data = {
-        'ph': st.slider('pH', 0.0, 14.0, 7.0),
-        'Hardness': st.number_input('Hardness (mg/L)', 0.0, value=200.0),
-        'Solids': st.number_input('Solids (ppm)', 0.0, value=300.0),
-        'Chloramines': st.number_input('Chloramines (ppm)', 0.0, value=3.0),
-        'Sulfate': st.number_input('Sulfate (mg/L)', 0.0, value=300.0),
-        'Conductivity': st.number_input('Conductivity (μS/cm)', 0.0, value=300.0),
-        'Organic_carbon': st.number_input('Organic Carbon (ppm)', 0.0, value=15.0),
-        'Trihalomethanes': st.number_input('Trihalomethanes (μg/L)', 0.0, value=3.0),
-        'Turbidity': st.number_input('Turbidity (NTU)', 0.0, value=3.0),
-    }
-
-    input_df = pd.DataFrame([input_data])[required_features].astype(float)
-    model_choice = st.selectbox("Choose a model", list(models.keys()))
-
-    if st.button("Predict"):
-        model = models[model_choice]
-        pred = model.predict(input_df)[0]
-        prob = model.predict_proba(input_df)[0]
-
-        st.metric("Safe Probability (%)", f"{prob[1]*100:.2f}%")
-        st.progress(prob[1])
-
-        if pred == 1:
-            st.success("✅ Prediction: POTABLE (Safe to drink)")
-        else:
-            st.warning("❌ Prediction: NOT POTABLE (Unsafe)")
-
-elif page == "Batch Prediction":
+if page == "Batch Prediction":
     st.header("📁 Batch Water Sample Prediction")
     if models is None:
         st.stop()
-
-    st.info("Upload a CSV file containing multiple water samples with all chemical features to predict their potability.")
 
     uploaded_file = st.file_uploader("Upload water samples CSV", type=['csv'])
 
@@ -145,11 +87,10 @@ elif page == "Batch Prediction":
 
         try:
             predictions = model.predict(batch_df)
-            probas = model.predict_proba(batch_df)[:,1]
+            probs = model.predict_proba(batch_df)[:, 1]
             labels = ["Safe (1)" if p == 1 else "Not Safe (0)" for p in predictions]
             batch_df['Predicted_Potability'] = labels
-            batch_df['Probability (%)'] = (probas * 100).round(2)
-
+            batch_df['Probability_Safe'] = probs
             st.subheader("Results")
             st.dataframe(batch_df)
 
@@ -161,23 +102,21 @@ elif page == "Batch Prediction":
             st.pyplot(fig1)
 
             st.bar_chart(counts)
+
             st.success(f"✅ Safe Samples: {counts.get('Safe (1)', 0)}")
             st.warning(f"❌ Not Safe Samples: {counts.get('Not Safe (0)', 0)}")
 
-            # Confusion Matrix for Batch (requires true labels)
-            if 'Potability' in batch_df.columns:
-                true = batch_df['Potability']
-                pred = model.predict(batch_df[required_features])
-                cm = confusion_matrix(true, pred)
-                st.subheader("Confusion Matrix (If Ground Truth Provided)")
-                st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
-
-                fig2, ax2 = plt.subplots()
-                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax2)
-                ax2.set_title("Confusion Matrix Heatmap")
-                ax2.set_xlabel("Predicted")
-                ax2.set_ylabel("Actual")
-                st.pyplot(fig2)
+            # Confusion matrix comparison
+            st.subheader("Confusion Matrix Comparison (using Test Set)")
+            for name, model in models.items():
+                y_pred = model.predict(X_test)
+                cm = confusion_matrix(y_test, y_pred)
+                fig, ax = plt.subplots()
+                sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+                ax.set_title(f"{name} Confusion Matrix")
+                ax.set_xlabel("Predicted")
+                ax.set_ylabel("Actual")
+                st.pyplot(fig)
 
         except Exception as e:
             st.error(f"Prediction error: {e}")
