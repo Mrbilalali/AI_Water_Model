@@ -4,3 +4,7 @@ numpy==1.26.4
 scikit-learn==1.6.1
 xgboost==3.0.0
 joblib==1.5.0
+imbalanced-learn
+seaborn
+matplotlib
+altair
