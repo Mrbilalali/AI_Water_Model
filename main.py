@@ -1,8 +1,8 @@
-# Water Quality Prediction Streamlit App
-
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -73,12 +73,21 @@ if page == "Model Training & Comparison":
         cm = confusion_matrix(y_test, y_pred)
         st.write(pd.DataFrame(cm, index=["Actual 0", "Actual 1"], columns=["Predicted 0", "Predicted 1"]))
 
+        # Plot heatmap
+        fig, ax = plt.subplots()
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+        ax.set_title("Confusion Matrix Heatmap")
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("Actual")
+        st.pyplot(fig)
+
 elif page == "Single Sample Prediction":
-    st.header("Single Sample Water Potability Prediction")
+    st.header("🔍 Single Sample Water Potability Prediction")
     if models is None:
         st.stop()
 
-    st.subheader("Input Parameters")
+    st.info("Provide the chemical parameters of a single water sample below to predict its potability.")
+
     input_data = {
         'ph': st.slider('pH', 0.0, 14.0, 7.0),
         'Hardness': st.number_input('Hardness (mg/L)', 0.0, value=200.0),
@@ -99,7 +108,7 @@ elif page == "Single Sample Prediction":
         pred = model.predict(input_df)[0]
         prob = model.predict_proba(input_df)[0]
 
-        st.write(f"Prediction Probability: Safe: {prob[1]*100:.2f}% | Not Safe: {prob[0]*100:.2f}%")
+        st.metric("Safe Probability (%)", f"{prob[1]*100:.2f}%")
         st.progress(prob[1])
 
         if pred == 1:
@@ -108,11 +117,12 @@ elif page == "Single Sample Prediction":
             st.warning("❌ Prediction: NOT POTABLE (Unsafe)")
 
 elif page == "Batch Prediction":
-    st.header("Batch Prediction")
+    st.header("📁 Batch Water Sample Prediction")
     if models is None:
         st.stop()
 
-    st.subheader("Upload CSV")
+    st.info("Upload a CSV file containing multiple water samples with all chemical features to predict their potability.")
+
     uploaded_file = st.file_uploader("Upload water samples CSV", type=['csv'])
 
     if uploaded_file is not None:
@@ -139,6 +149,16 @@ elif page == "Batch Prediction":
             batch_df['Predicted_Potability'] = labels
             st.subheader("Results")
             st.dataframe(batch_df)
-            st.bar_chart(batch_df['Predicted_Potability'].value_counts())
+
+            # Summary pie chart
+            counts = batch_df['Predicted_Potability'].value_counts()
+            fig1, ax1 = plt.subplots()
+            ax1.pie(counts, labels=counts.index, autopct='%1.1f%%', startangle=90)
+            ax1.axis('equal')
+            st.pyplot(fig1)
+
+            st.bar_chart(counts)
+            st.success(f"✅ Safe Samples: {counts.get('Safe (1)', 0)}")
+            st.warning(f"❌ Not Safe Samples: {counts.get('Not Safe (0)', 0)}")
         except Exception as e:
             st.error(f"Prediction error: {e}")
