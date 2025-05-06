@@ -1,228 +1,192 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import StringIO
+
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.naive_bayes import GaussianNB
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from imblearn.under_sampling import RandomUnderSampler
-from imblearn.over_sampling import RandomOverSampler
-import seaborn as sns
-import matplotlib.pyplot as plt
-import altair as alt
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 
-# -- Streamlit Page Configuration --
-st.set_page_config(page_title="Water Quality Classifier", layout="wide")
+# Streamlit app: Water Quality Classifier and Predictor
 
-# -- Data Loading and Preprocessing --
-DATA_URL = "https://raw.githubusercontent.com/Sarthak-1408/Water-Potability/main/water_potability.csv"
+# Required input features for water quality prediction
+required_features = ['ph', 'Hardness', 'Solids', 'Chloramines', 'Sulfate',
+                     'Conductivity', 'Organic_carbon', 'Trihalomethanes', 'Turbidity']
 
-@st.cache_data
-def load_data():
-    """Load data from URL and fill missing values."""
-    df = pd.read_csv(DATA_URL)
-    # Impute missing values with column mean
-    df.fillna(df.mean(), inplace=True)
-    X = df.drop("Potability", axis=1)
-    y = df["Potability"]
-    return X, y
+# Sidebar navigation
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Model Training & Comparison", "Single Sample Prediction", "Batch Prediction"])
 
-@st.cache_data
-def split_data(X, y):
-    """Split data into training and test sets."""
-    # Use stratify to maintain class distribution
-    return train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
-
+# Load and preprocess data, then train multiple models
 @st.cache_resource
-def train_all_models(X_train, y_train, X_test, y_test):
-    """
-    Train models with specified resampling techniques and return a dictionary 
-    of trained models with their metrics.
-    """
-    models_metrics = {}
-    rus = RandomUnderSampler(random_state=42)
-    ros = RandomOverSampler(random_state=42)
-    # Scale numeric features for models that benefit from scaling
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-
-    # 1) RUS + RandomForestClassifier
-    X_rus, y_rus = rus.fit_resample(X_train, y_train)
-    rf = RandomForestClassifier(random_state=42)
-    rf.fit(X_rus, y_rus)
-    y_pred = rf.predict(X_test)
-    models_metrics["RUS + RandomForest"] = {
-        "model": rf,
-        "scaled": False,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "confusion_matrix": confusion_matrix(y_test, y_pred),
-        "report_dict": classification_report(y_test, y_pred, output_dict=True)
+def load_and_train_models():
+    # Load dataset (ensure 'water_potability.csv' is in the app directory)
+    try:
+        data = pd.read_csv("water_potability.csv")
+    except FileNotFoundError:
+        st.error("Data file 'water_potability.csv' not found. Please place the dataset in the app directory.")
+        return None, None, None, None, None, None
+    # Fill missing values in dataset with column mean
+    data.fillna(data.mean(), inplace=True)
+    # Separate features and target
+    X = data[required_features]
+    if 'Potability' in data.columns:
+        y = data['Potability']
+    else:
+        st.error("Training data does not contain 'Potability' target column.")
+        return None, None, None, None, None, None
+    # Split into training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y,
+                                                        test_size=0.2,
+                                                        random_state=42)
+    # Define multiple classifiers
+    models = {
+        "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
+        "Random Forest": RandomForestClassifier(random_state=42),
+        "Support Vector Machine": SVC(probability=True, random_state=42),
+        "K-Nearest Neighbors": KNeighborsClassifier(),
+        "Decision Tree": DecisionTreeClassifier(random_state=42)
     }
+    # Train each model and compute performance metrics
+    metrics = {}
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, zero_division=0)
+        rec = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        metrics[name] = {"Accuracy": acc, "Precision": prec,
+                         "Recall": rec, "F1 Score": f1}
+    return models, metrics, X_test, y_test, X, y
 
-    # 2) ROS + LogisticRegression
-    X_ros, y_ros = ros.fit_resample(X_train_scaled, y_train)
-    lr = LogisticRegression(max_iter=1000, random_state=42)
-    lr.fit(X_ros, y_ros)
-    y_pred = lr.predict(X_test_scaled)
-    models_metrics["ROS + LogisticRegression"] = {
-        "model": lr,
-        "scaled": True,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "confusion_matrix": confusion_matrix(y_test, y_pred),
-        "report_dict": classification_report(y_test, y_pred, output_dict=True)
-    }
+# Load models and metrics (cached for efficiency)
+models, metrics, X_test, y_test, X_data, y_data = load_and_train_models()
 
-    # 3) ROS + GaussianNB
-    X_ros2, y_ros2 = ros.fit_resample(X_train_scaled, y_train)
-    nb = GaussianNB()
-    nb.fit(X_ros2, y_ros2)
-    y_pred = nb.predict(X_test_scaled)
-    models_metrics["ROS + GaussianNB"] = {
-        "model": nb,
-        "scaled": True,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "confusion_matrix": confusion_matrix(y_test, y_pred),
-        "report_dict": classification_report(y_test, y_pred, output_dict=True)
-    }
+# Page: Model Training & Comparison
+if page == "Model Training & Comparison":
+    st.header("Train and Compare Multiple Water Quality Classifiers")
+    if models is None:
+        st.stop()
+    # Show performance metrics table
+    st.subheader("Model Performance on Test Set")
+    metrics_df = pd.DataFrame(metrics).T
+    st.dataframe(metrics_df.style.format({"Accuracy": "{:.2f}",
+                                          "Precision": "{:.2f}",
+                                          "Recall": "{:.2f}",
+                                          "F1 Score": "{:.2f}"}))
+    # Confusion matrix for a selected model
+    st.subheader("Confusion Matrix (Test Data)")
+    model_choice = st.selectbox("Choose a model for confusion matrix",
+                                list(models.keys()))
+    if model_choice:
+        model = models[model_choice]
+        y_pred = model.predict(X_test)
+        cm = confusion_matrix(y_test, y_pred)
+        st.write(f"Confusion matrix for {model_choice}:")
+        st.write(pd.DataFrame(cm,
+                              index=["Actual 0", "Actual 1"],
+                              columns=["Predicted 0", "Predicted 1"]))
 
-    # 4) RUS + KNeighborsClassifier
-    X_rus2, y_rus2 = rus.fit_resample(X_train_scaled, y_train)
-    knn = KNeighborsClassifier()
-    knn.fit(X_rus2, y_rus2)
-    y_pred = knn.predict(X_test_scaled)
-    models_metrics["RUS + KNeighbors"] = {
-        "model": knn,
-        "scaled": True,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "confusion_matrix": confusion_matrix(y_test, y_pred),
-        "report_dict": classification_report(y_test, y_pred, output_dict=True)
-    }
-
-    # 5) ROS + XGBoost (XGBClassifier)
-    X_ros3, y_ros3 = ros.fit_resample(X_train, y_train)
-    xgb = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    xgb.fit(X_ros3, y_ros3)
-    y_pred = xgb.predict(X_test)
-    models_metrics["ROS + XGBoost"] = {
-        "model": xgb,
-        "scaled": False,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "confusion_matrix": confusion_matrix(y_test, y_pred),
-        "report_dict": classification_report(y_test, y_pred, output_dict=True)
-    }
-
-    return models_metrics, scaler
-
-# Load and split the data
-X, y = load_data()
-X_train, X_test, y_train, y_test = split_data(X, y)
-
-# Train all models and get their metrics
-model_metrics, scaler = train_all_models(X_train, y_train, X_test, y_test)
-
-# -- Streamlit Interface --
-
-# Sidebar: select which models to display/ use
-model_keys = list(model_metrics.keys())
-selected_models = st.sidebar.multiselect(
-    "Select Model(s) for Analysis:",
-    model_keys,
-    default=model_keys
-)
-
-# Create three tabs: Model Comparison, Single Prediction, Batch Prediction
-tab1, tab2, tab3 = st.tabs(["Model Comparison", "Single Prediction", "Batch Prediction"])
-
-with tab1:
-    st.header("Model Training and Comparison")
-    st.write("The performance of each selected model on the test set is shown below:")
-    for name in selected_models:
-        res = model_metrics[name]
-        st.subheader(name)
-        # Display accuracy
-        st.write(f"**Accuracy:** {res['accuracy']:.3f}")
-        # Display classification report as text
-        report_text = classification_report(
-            y_test, 
-            res["model"].predict(
-                scaler.transform(X_test) if res["scaled"] else X_test
-            )
-        )
-        st.text(f"Classification Report:\n{report_text}")
-        # Confusion matrix heatmap
-        cm = res["confusion_matrix"]
-        fig_cm, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt='d', cmap="Blues", ax=ax)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("Actual")
-        ax.set_title(f"Confusion Matrix for {name}")
-        st.pyplot(fig_cm)
-        # Bar chart for precision, recall, f1-score (classes 0 and 1)
-        report_df = pd.DataFrame(res["report_dict"]).T.iloc[:2, :3]  # take classes 0 and 1 rows
-        st.bar_chart(report_df[["precision", "recall", "f1-score"]])
-
-with tab2:
-    st.header("Single Sample Prediction")
-    st.write("Enter values for a single water sample to predict its potability.")
-    with st.form("prediction_form"):
-        ph = st.number_input("pH", min_value=0.0, max_value=14.0, value=7.0)
-        hardness = st.number_input("Hardness", min_value=0.0, value=200.0)
-        solids = st.number_input("Solids (ppm)", min_value=0.0, value=20000.0)
-        chloramines = st.number_input("Chloramines", min_value=0.0, value=7.0)
-        sulfate = st.number_input("Sulfate", min_value=0.0, value=250.0)
-        conductivity = st.number_input("Conductivity", min_value=0.0, value=300.0)
-        organic_carbon = st.number_input("Organic Carbon", min_value=0.0, value=10.0)
-        trihalomethanes = st.number_input("Trihalomethanes", min_value=0.0, value=4.0)
-        turbidity = st.number_input("Turbidity", min_value=0.0, value=3.0)
-        submit_single = st.form_submit_button("Predict")
-    if submit_single:
-        # Create input array
-        X_new = np.array([[ph, hardness, solids, chloramines,
-                           sulfate, conductivity, organic_carbon,
-                           trihalomethanes, turbidity]])
-        for name in selected_models:
-            model = model_metrics[name]["model"]
-            # Scale input if model was trained on scaled data
-            X_input = scaler.transform(X_new) if model_metrics[name]["scaled"] else X_new
-            pred_proba = model.predict_proba(X_input)[0]
-            pred_class = model.predict(X_input)[0]
-            st.write(f"**{name}:** Predicted = **{'Potable' if pred_class==1 else 'Not Potable'}**")
-            st.write(f" - Probability (Potable=1): {pred_proba[1]*100:.1f}%")
-            st.write(f" - Probability (Not Potable=0): {pred_proba[0]*100:.1f}%")
-
-with tab3:
-    st.header("Batch Prediction")
-    st.write("Upload a CSV file of water samples for batch prediction (columns must match features).")
-    uploaded_file = st.file_uploader("Choose CSV file", type="csv")
-    if uploaded_file:
-        df_batch = pd.read_csv(uploaded_file)
-        st.write("Input Data Preview:")
-        st.dataframe(df_batch.head())
-        # Make predictions for each selected model
-        for name in selected_models:
-            model = model_metrics[name]["model"]
-            if model_metrics[name]["scaled"]:
-                X_batch = scaler.transform(df_batch.values)
+# Page: Single Sample Prediction
+elif page == "Single Sample Prediction":
+    st.header("Predict Water Potability for a Single Sample")
+    if models is None:
+        st.stop()
+    st.subheader("Input Water Quality Parameters")
+    # Collect user inputs for each feature
+    input_data = {}
+    input_data['ph'] = st.slider('pH', 0.0, 14.0, 7.0)
+    input_data['Hardness'] = st.number_input('Hardness (mg/L)',
+                                             min_value=0.0, step=0.1, value=200.0)
+    input_data['Solids'] = st.number_input('Solids (ppm)',
+                                          min_value=0.0, step=1.0, value=300.0)
+    input_data['Chloramines'] = st.number_input('Chloramines (ppm)',
+                                               min_value=0.0, step=0.1, value=3.0)
+    input_data['Sulfate'] = st.number_input('Sulfate (mg/L)',
+                                           min_value=0.0, step=0.1, value=300.0)
+    input_data['Conductivity'] = st.number_input('Conductivity (μS/cm)',
+                                                min_value=0.0, step=0.1, value=300.0)
+    input_data['Organic_carbon'] = st.number_input('Organic Carbon (ppm)',
+                                                  min_value=0.0, step=0.1, value=15.0)
+    input_data['Trihalomethanes'] = st.number_input('Trihalomethanes (μg/L)',
+                                                   min_value=0.0, step=0.1, value=3.0)
+    input_data['Turbidity'] = st.number_input('Turbidity (NTU)',
+                                             min_value=0.0, step=0.1, value=3.0)
+    input_df = pd.DataFrame([input_data])
+    # Model selection for prediction
+    model_choice2 = st.selectbox("Choose a model for prediction",
+                                 list(models.keys()), index=0)
+    # Predict on button press
+    if st.button("Predict"):
+        model = models[model_choice2]
+        try:
+            pred = model.predict(input_df)[0]
+        except Exception as e:
+            st.error(f"Error in prediction: {e}")
+        else:
+            if pred == 1:
+                st.success("Prediction: POTABLE (Safe)")
             else:
-                X_batch = df_batch.values
-            df_batch[name] = model.predict(X_batch)
-        st.write("Predictions:")
-        st.dataframe(df_batch)
-        # Display summary bar charts of predicted classes for each model
-        for name in selected_models:
-            counts = df_batch[name].value_counts(normalize=True).sort_index() * 100
-            summary_df = pd.DataFrame({
-                'Class': ['Not Potable (0)', 'Potable (1)'],
-                'Percentage': [counts.get(0, 0), counts.get(1, 0)]
-            })
-            st.subheader(f"{name} Prediction Summary")
-            chart = alt.Chart(summary_df).mark_bar().encode(
-                x='Class:N', y='Percentage:Q', color='Class:N'
-            )
-            st.altair_chart(chart, use_container_width=True)
+                st.warning("Prediction: NOT POTABLE (Unsafe)")
+
+# Page: Batch Prediction
+elif page == "Batch Prediction":
+    st.header("Batch Prediction from CSV File")
+    if models is None:
+        st.stop()
+    st.subheader("Upload CSV")
+    uploaded_file = st.file_uploader("Upload a CSV file with water samples",
+                                     type=['csv'])
+    if uploaded_file is not None:
+        try:
+            batch_df = pd.read_csv(uploaded_file)
+        except Exception:
+            st.error("Could not read the uploaded file. Ensure it is a valid CSV.")
+            st.stop()
+        # Validate required columns presence
+        missing_cols = [col for col in required_features if col not in batch_df.columns]
+        if missing_cols:
+            st.error(f"Missing columns: {missing_cols}. Please include all required features: {required_features}")
+            st.stop()
+        # Drop any extra columns (like 'Potability')
+        extra_cols = [col for col in batch_df.columns if col not in required_features]
+        if extra_cols:
+            batch_df = batch_df.drop(columns=extra_cols)
+        # Reorder to match training order
+        batch_df = batch_df[required_features]
+        # Convert to numeric, coerce errors to NaN
+        batch_numeric = batch_df.apply(pd.to_numeric, errors='coerce')
+        means = batch_numeric.mean()
+        # Check for columns with no numeric data
+        invalid_cols = [col for col in required_features if pd.isna(means[col])]
+        if invalid_cols:
+            st.error(f"Columns {invalid_cols} have invalid (non-numeric) values. Ensure all values are numeric.")
+            st.stop()
+        # Fill missing values with means
+        batch_clean = batch_numeric.fillna(means)
+        # Model selection for batch prediction
+        model_choice3 = st.selectbox("Choose a model for batch prediction",
+                                     list(models.keys()), index=0)
+        model = models[model_choice3]
+        try:
+            predictions = model.predict(batch_clean)
+        except Exception as e:
+            st.error(f"Prediction failed: {e}")
+            st.stop()
+        # Map predictions to human-readable labels
+        label_map = {0: "Not Safe (0)", 1: "Safe (1)"}
+        prediction_labels = [label_map.get(pred, str(pred)) for pred in predictions]
+        # Display results
+        output_df = batch_df.copy()
+        output_df['Predicted_Potability'] = prediction_labels
+        st.subheader("Prediction Results")
+        st.dataframe(output_df)
+        # Visualization of prediction distribution
+        st.subheader("Prediction Distribution")
+        pred_counts = pd.Series(prediction_labels).value_counts().reset_index()
+        pred_counts.columns = ['Potability', 'Count']
+        st.bar_chart(data=pred_counts.set_index('Potability'))
